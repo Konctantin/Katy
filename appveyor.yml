@@ -1,0 +1,26 @@
+# Specify version format
+version: 1.0.{build}
+
+# build platform, i.e. Win32 (instead of x86), x64, Any CPU. This setting is optional.
+platform:
+  - Win32
+  - x64
+
+# build configuration, i.e. Debug, Release, etc.
+configuration:
+  - Debug
+  - Release
+
+clone_depth: 1
+
+before_build:
+  - cmd: git submodule update --init --recursive
+
+# build settings
+build:
+  project: Katy.sln
+  parallel: true
+  verbosity: minimal
+
+ # unit test
+test: off
