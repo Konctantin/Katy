@@ -18,7 +18,7 @@ public:
         if (!outputHandle || outputHandle == INVALID_HANDLE_VALUE)
             return false;
 
-        SetConsoleTitle("WIPS, WoW injector packet sniffer");
+        SetConsoleTitle("Katy, WoW injector packet sniffer");
 
         freopen("CONOUT$", "w", stdout);
         _sniffingLoopCondition = true;

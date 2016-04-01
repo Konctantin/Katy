@@ -18,7 +18,7 @@ HookInfo hookInfo;
 
 char dllPath[MAX_PATH] = { NULL };
 
-void DumpPacket(DWORD packetType, DWORD connectionId, DWORD opcode, BYTE dataOffset, DWORD size, PBYTE buffer)
+void DumpPacket(DWORD packetType, DWORD connectionId, DWORD opcode, DWORD size, PBYTE buffer)
 {
     mtx.lock();
 
@@ -59,15 +59,15 @@ void DumpPacket(DWORD packetType, DWORD connectionId, DWORD opcode, BYTE dataOff
         fwrite((PDWORD)&optionalHeaderLength,   4, 1, fileDump);  // opional header length
         fflush(fileDump);
     }
-
+    DWORD fullSize = size + sizeof(DWORD);
     fwrite((PDWORD)&packetType,             4, 1, fileDump);  // direction of the packet
     fwrite((PDWORD)&connectionId,           4, 1, fileDump);  // connection id
     fwrite((PDWORD)&tickCount,              4, 1, fileDump);  // timestamp of the packet
     fwrite((PDWORD)&optionalHeaderLength,   4, 1, fileDump);  // optional data size
-    fwrite((PDWORD)&size,                   4, 1, fileDump);  // size of the packet + opcode lenght
+    fwrite((PDWORD)&fullSize,               4, 1, fileDump);  // size of the packet + opcode lenght
     fwrite((PDWORD)&opcode,                 4, 1, fileDump);  // opcode
 
-    fwrite(buffer + dataOffset, size - dataOffset, 1, fileDump);  // data
+    fwrite(buffer, size, 1, fileDump);  // data
 
 #if _DEBUG
     printf("%s Opcode: 0x%04X Size: %-8u\n", packetType == CMSG ? "CMSG" : "SMSG", opcode, size);
@@ -87,11 +87,11 @@ void __fastcall SendHook(LPVOID a1, CDataStore* ds, DWORD connectionId)
     if (wowInfo.build >= 21336)
     {
         // skip 4 bytes
-        DumpPacket(CMSG, connectionId, *(WORD*)(ds->buffer + 4), 6, ds->size - 4, ds->buffer);
+        DumpPacket(CMSG, connectionId, *(WORD*)(ds->buffer + 4), ds->size - 6, ds->buffer + 6);
     }
     else
     {
-        DumpPacket(CMSG, connectionId, *(DWORD*)ds->buffer, 4, ds->size, ds->buffer);
+        DumpPacket(CMSG, connectionId, *(DWORD*)ds->buffer, ds->size - 4, ds->buffer + 4);
     }
     CHECK(hookInfo.sendHookGood, "Send hook is working.\n");
     reinterpret_cast<decltype(&SendHook)>(hookInfo.sendDetour)(a1, ds, connectionId);
@@ -101,11 +101,11 @@ DWORD_PTR __fastcall RecvHook_WOD(LPVOID a1, LPVOID a2, LPVOID a3, PBYTE buff, D
 {
     if (wowInfo.build >= 21336)
     {
-        DumpPacket(SMSG, 0, *(WORD*)buff, 2, size, buff);
+        DumpPacket(SMSG, 0, *(WORD*)buff, size - 2, buff + 2);
     }
     else
     {
-        DumpPacket(SMSG, 0, *(DWORD*)buff, 4, size, buff);
+        DumpPacket(SMSG, 0, *(DWORD*)buff, size - 4, buff + 4);
     }
     CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     return reinterpret_cast<decltype(&RecvHook_WOD)>(hookInfo.recvDetour)(a1, a2, a3, buff, size);
@@ -113,7 +113,7 @@ DWORD_PTR __fastcall RecvHook_WOD(LPVOID a1, LPVOID a2, LPVOID a3, PBYTE buff, D
 
 DWORD_PTR __fastcall RecvHook_Legion(LPVOID a1, LPVOID a2, LPVOID a3, PBYTE buff, DWORD size)
 {
-    DumpPacket(SMSG, 0, *(WORD*)buff, 2, size, buff);
+    DumpPacket(SMSG, 0, *(WORD*)buff, size - 2, buff + 2);
     CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     return reinterpret_cast<decltype(&RecvHook_Legion)>(hookInfo.recvDetour)(a1, a2, a3, buff, size);
 }
@@ -137,11 +137,11 @@ DWORD __fastcall SendHook(LPVOID self, LPVOID dummy, CDataStore* ds, DWORD conne
     if (wowInfo.build >= 21336)
     {
         // skip 4 bytes
-        DumpPacket(CMSG, connectionId, *(WORD*)(ds->buffer + 4), 6, ds->size - 4, ds->buffer);
+        DumpPacket(CMSG, connectionId, *(WORD*)(ds->buffer + 4), ds->size - 6, ds->buffer + 6);
     }
     else
     {
-        DumpPacket(CMSG, connectionId, *(DWORD*)ds->buffer, 4, ds->size, ds->buffer);
+        DumpPacket(CMSG, connectionId, *(DWORD*)ds->buffer, ds->size - 4, ds->buffer + 4);
     }
 
     CHECK(hookInfo.sendHookGood, "Send hook is working.\n");
@@ -153,7 +153,7 @@ DWORD __fastcall SendHook(LPVOID self, LPVOID dummy, CDataStore* ds, DWORD conne
 
 DWORD __fastcall RecvHook(LPVOID self, LPVOID dummy, LPVOID param1, CDataStore* ds)
 {
-    DumpPacket(SMSG, 0, *(WORD*)ds->buffer, 2, ds->size, ds->buffer);
+    DumpPacket(SMSG, 0, *(WORD*)ds->buffer, ds->size - 2, ds->buffer + 2);
     CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, CDataStore*);
     return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, ds);
@@ -161,7 +161,7 @@ DWORD __fastcall RecvHook(LPVOID self, LPVOID dummy, LPVOID param1, CDataStore* 
 
 DWORD __fastcall RecvHook_TBC(LPVOID self, LPVOID dummy, LPVOID param1, CDataStore* ds, LPVOID param3)
 {
-    DumpPacket(SMSG, 0, *(WORD*)ds->buffer, 2, ds->size, ds->buffer);
+    DumpPacket(SMSG, 0, *(WORD*)ds->buffer, ds->size - 2, ds->buffer + 2);
     CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, CDataStore*, LPVOID);
     return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, ds, param3);
@@ -169,7 +169,7 @@ DWORD __fastcall RecvHook_TBC(LPVOID self, LPVOID dummy, LPVOID param1, CDataSto
 
 DWORD __fastcall RecvHook_MOP(LPVOID self, LPVOID dummy, LPVOID param1, CDataStore* ds, LPVOID param3)
 {
-    DumpPacket(SMSG, 0, *(DWORD*)ds->buffer, 4, ds->size, ds->buffer);
+    DumpPacket(SMSG, 0, *(DWORD*)ds->buffer, ds->size - 4, ds->buffer + 4);
     CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, CDataStore*, LPVOID);
     return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, ds, param3);
@@ -179,11 +179,11 @@ DWORD __fastcall RecvHook_WOD(LPVOID self, LPVOID dummy, LPVOID param1, LPVOID p
 {
     if (wowInfo.build >= 21336)
     {
-        DumpPacket(SMSG, 0, *(WORD*)ds->buffer, 2, ds->size, ds->buffer);
+        DumpPacket(SMSG, 0, *(WORD*)ds->buffer, ds->size - 2, ds->buffer + 2);
     }
     else
     {
-        DumpPacket(SMSG, 0, *(DWORD*)ds->buffer, 4, ds->size, ds->buffer);
+        DumpPacket(SMSG, 0, *(DWORD*)ds->buffer, ds->size - 4, ds->buffer + 4);
     }
 
     CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
@@ -193,7 +193,7 @@ DWORD __fastcall RecvHook_WOD(LPVOID self, LPVOID dummy, LPVOID param1, LPVOID p
 
 DWORD __fastcall RecvHook_Legion(LPVOID self, LPVOID dummy, LPVOID param1, LPVOID param2, CDataStore* ds, LPVOID param4)
 {
-    DumpPacket(SMSG, 0, *(WORD*)ds->buffer, 2, ds->size, ds->buffer);
+    DumpPacket(SMSG, 0, *(WORD*)ds->buffer, ds->size - 2, ds->buffer + 2);
     CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, LPVOID, CDataStore*, LPVOID);
     return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, param2, ds, param4);
