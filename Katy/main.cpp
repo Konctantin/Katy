@@ -16,6 +16,8 @@ FILE* fileDump = NULL;
 WowInfo wowInfo;
 HookInfo hookInfo;
 
+volatile long cmsgCount = 0L, smsgCount = 0L;
+
 char dllPath[MAX_PATH] = { NULL };
 
 void DumpPacket(DWORD packetType, DWORD connectionId, DWORD opcode, DWORD size, PBYTE buffer)
@@ -72,6 +74,9 @@ void DumpPacket(DWORD packetType, DWORD connectionId, DWORD opcode, DWORD size, 
 #if _DEBUG
     printf("%s Opcode: 0x%04X Size: %-8u\n", packetType == CMSG ? "CMSG" : "SMSG", opcode, size);
 #endif
+
+	if (packetType == CMSG) InterlockedAdd(&cmsgCount, 1L);
+	if (packetType == SMSG) InterlockedAdd(&smsgCount, 1L);
 
     fflush(fileDump);
 
@@ -315,8 +320,13 @@ DWORD MainThreadControl(LPVOID  param)
 
     printf(">> All '%s' hooks is installed.\n", proto.name);
 
-    while (ConsoleManager::IsRuning())
-        Sleep(50);
+	char titleBuff[100];
+	while (ConsoleManager::IsRuning())
+	{
+		_snprintf(titleBuff, sizeof(titleBuff), "Katy, WoW injector packet sniffer.    CMSG: %u    SMSG: %u", cmsgCount, smsgCount);
+		SetConsoleTitle(titleBuff);
+		Sleep(100);
+	}
 
     MH_DisableHook(MH_ALL_HOOKS);
     printf("All hook disabled.\n");
