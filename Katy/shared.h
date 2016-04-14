@@ -1,7 +1,6 @@
 #pragma once
 #include <psapi.h>
 #include <io.h>
-#include "ConsoleManager.h"
 
 #define CMSG 0x47534D43 // client to server message
 #define SMSG 0x47534D53 // server to client message
@@ -12,10 +11,20 @@ const PCHAR offsetFileName = "offsets.x64.ini";
 const PCHAR offsetFileName = "offsets.x86.ini";
 #endif
 
-const WORD pkt_version    = 0x0301;
-const BYTE sniffer_id     = 15;
-const BYTE sessionKey[40] = { NULL };
-const DWORD optionalHeaderLength = 0;
+#pragma pack(push, 1)
+typedef struct {
+    char  Magik[3] = { 'P', 'K', 'T' };
+    WORD  Version = 0x0301;
+    BYTE  SnifferId = 15;
+    DWORD Build;
+    char  Locale[4] = { 'x','x','X','X' };
+    char  SessionKey[40] = { 0 };
+    DWORD RawTime;
+    DWORD TickCount;
+    DWORD OptHeaderLen = sizeof(DWORD);
+    DWORD Expansion;
+} PktHeader;
+#pragma pack(pop)
 
 typedef struct {
     LPVOID vTable;
@@ -33,17 +42,6 @@ typedef struct {
 } ProtoEntry;
 
 typedef struct {
-    LPVOID sendDetour;
-    LPVOID recvDetour;
-    bool sendHookGood = false;
-    bool recvHookGood = false;
-
-    char locale[5] = { "xxXX" };
-} HookInfo;
-
-typedef struct {
-    WORD  build;
-    WORD  expansion;
     DWORD send;
     DWORD recv;
     DWORD lang;
@@ -51,7 +49,7 @@ typedef struct {
     bool IsEmpty() { return send == NULL || recv == NULL; }
 } WowInfo;
 
-bool GetVerInfoFromProcess(HANDLE hProcess, PWORD build, PWORD expansion)
+bool GetVerInfoFromProcess(HANDLE hProcess, PDWORD build, PDWORD expansion)
 {
     char processExePath[MAX_PATH];
     DWORD processExePathSize = hProcess
@@ -96,7 +94,7 @@ bool GetVerInfoFromProcess(HANDLE hProcess, PWORD build, PWORD expansion)
     return true;
 }
 
-bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, WowInfo* entry)
+bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, PktHeader* header, WowInfo* entry)
 {
     char fileName[MAX_PATH];
     char dllPath[MAX_PATH];
@@ -105,20 +103,20 @@ bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, WowInfo* en
     GetModuleFileName((HMODULE)moduleHandle, dllPath, MAX_PATH);
     PathRemoveFileSpec(dllPath);
 
-    if (!GetVerInfoFromProcess(hProcess, &entry->build, &entry->expansion))
+    if (!GetVerInfoFromProcess(hProcess, &header->Build, &header->Expansion))
     {
         printf("ERROR: Can't get wow version info!\n\n");
         return false;
     }
 
     _snprintf(fileName, MAX_PATH, "%s\\%s", dllPath, offsetFileName);
-    _snprintf(section, 6, "%i", entry->build);
+    _snprintf(section, 6, "%i", header->Build);
 
     if (_access(fileName, 0) == -1)
     {
         printf("ERROR: File \"%s\" does not exist.\n", fileName);
         printf("\n%s template:\n", offsetFileName);
-        printf("[build]\n");
+        printf("[%u]\n", header->Build);
         printf("send=0xDEADBEEF\n");
         printf("recv=0xDEADBEEF\n");
         printf("lang=0xDEADBEEF\n\n");

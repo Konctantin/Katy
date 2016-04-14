@@ -4,19 +4,22 @@
 #include <Shlwapi.h>
 #include <cstdio>
 #include <ctime>
-#include "ConsoleManager.h"
 #include "shared.h"
 #include <mutex>
 #include "MinHook.h"
+
+#define KATY "Katy, WoW injector packet sniffer"
 
 std::mutex mtx;
 HINSTANCE instanceDLL = NULL;
 FILE* fileDump = NULL;
 
 WowInfo wowInfo;
-HookInfo hookInfo;
+PktHeader header;
 
+LPVOID recvDetour = NULL, sendDetour = NULL;
 volatile long cmsgCount = 0L, smsgCount = 0L;
+volatile bool isRuning = false;
 
 char dllPath[MAX_PATH] = { NULL };
 
@@ -31,11 +34,14 @@ void DumpPacket(DWORD packetType, DWORD connectionId, DWORD opcode, DWORD size, 
     if (!fileDump)
     {
         tm* date = localtime(&rawTime);
+        header.TickCount = tickCount;
+        header.RawTime = (DWORD)rawTime;
+
         char fileName[MAX_PATH];
         PathRemoveFileSpec(dllPath);
         _snprintf(fileName, MAX_PATH,
             "wowsniff_%s_%u_%u_%d-%02d-%02d_%02d-%02d-%02d.pkt",
-            hookInfo.locale, wowInfo.expansion, wowInfo.build,
+            header.Locale, header.Expansion, header.Build,
             date->tm_year + 1900,
             date->tm_mon + 1,
             date->tm_mday,
@@ -49,25 +55,19 @@ void DumpPacket(DWORD packetType, DWORD connectionId, DWORD opcode, DWORD size, 
         _snprintf(fullFileName, MAX_PATH, "%s\\%s", dllPath, fileName);
         fileDump = fopen(fullFileName, "wb");
 
-        fwrite("PKT",                           3, 1, fileDump);  // magic
-        fwrite((PWORD)&pkt_version,             2, 1, fileDump);  // major.minor version (3.1)
-        fwrite((PBYTE)&sniffer_id,              1, 1, fileDump);  // sniffer id
-        fwrite((PWORD)&wowInfo.build,           2, 1, fileDump);  // client build
-        fwrite(sessionKey,                      1, 2, fileDump);  // client build (aligned bytes)
-        fwrite(hookInfo.locale,                 4, 1, fileDump);  // client lang
-        fwrite(sessionKey,                     40, 1, fileDump);  // session key
-        fwrite((PDWORD)&rawTime,                4, 1, fileDump);  // started time
-        fwrite((PDWORD)&tickCount,              4, 1, fileDump);  // started tick's
-        fwrite((PDWORD)&optionalHeaderLength,   4, 1, fileDump);  // opional header length
+        fwrite(&header, sizeof(header), 1, fileDump);
         fflush(fileDump);
     }
+
     DWORD fullSize = size + sizeof(DWORD);
-    fwrite((PDWORD)&packetType,             4, 1, fileDump);  // direction of the packet
-    fwrite((PDWORD)&connectionId,           4, 1, fileDump);  // connection id
-    fwrite((PDWORD)&tickCount,              4, 1, fileDump);  // timestamp of the packet
-    fwrite((PDWORD)&optionalHeaderLength,   4, 1, fileDump);  // optional data size
-    fwrite((PDWORD)&fullSize,               4, 1, fileDump);  // size of the packet + opcode lenght
-    fwrite((PDWORD)&opcode,                 4, 1, fileDump);  // opcode
+    const DWORD optHeaderLen = 0;
+
+    fwrite((PDWORD)&packetType,   4, 1, fileDump);  // direction of the packet
+    fwrite((PDWORD)&connectionId, 4, 1, fileDump);  // connection id
+    fwrite((PDWORD)&tickCount,    4, 1, fileDump);  // timestamp of the packet
+    fwrite((PDWORD)&optHeaderLen, 4, 1, fileDump);  // optional data size
+    fwrite((PDWORD)&fullSize,     4, 1, fileDump);  // size of the packet + opcode lenght
+    fwrite((PDWORD)&opcode,       4, 1, fileDump);  // opcode
 
     fwrite(buffer, size, 1, fileDump);  // data
 
@@ -75,21 +75,22 @@ void DumpPacket(DWORD packetType, DWORD connectionId, DWORD opcode, DWORD size, 
     printf("%s Opcode: 0x%04X Size: %-8u\n", packetType == CMSG ? "CMSG" : "SMSG", opcode, size);
 #endif
 
-	if (packetType == CMSG) InterlockedAdd(&cmsgCount, 1L);
-	if (packetType == SMSG) InterlockedAdd(&smsgCount, 1L);
+    if (packetType == CMSG)
+        InterlockedAdd(&cmsgCount, 1L);
+
+    if (packetType == SMSG)
+        InterlockedAdd(&smsgCount, 1L);
 
     fflush(fileDump);
 
     mtx.unlock();
 }
 
-#define CHECK(p, m) if (!(p)) { printf((m)); (p) = true; }
-
 #if _WIN64
 
 void __fastcall SendHook(LPVOID a1, CDataStore* ds, DWORD connectionId)
 {
-    if (wowInfo.build >= 21336)
+    if (header.Build >= 21336)
     {
         // skip 4 bytes
         DumpPacket(CMSG, connectionId, *(WORD*)(ds->buffer + 4), ds->size - 6, ds->buffer + 6);
@@ -98,13 +99,12 @@ void __fastcall SendHook(LPVOID a1, CDataStore* ds, DWORD connectionId)
     {
         DumpPacket(CMSG, connectionId, *(DWORD*)ds->buffer, ds->size - 4, ds->buffer + 4);
     }
-    CHECK(hookInfo.sendHookGood, "Send hook is working.\n");
-    reinterpret_cast<decltype(&SendHook)>(hookInfo.sendDetour)(a1, ds, connectionId);
+    reinterpret_cast<decltype(&SendHook)>(sendDetour)(a1, ds, connectionId);
 }
 
 DWORD_PTR __fastcall RecvHook_WOD(LPVOID a1, LPVOID a2, LPVOID a3, PBYTE buff, DWORD size)
 {
-    if (wowInfo.build >= 21336)
+    if (header.Build >= 21336)
     {
         DumpPacket(SMSG, 0, *(WORD*)buff, size - 2, buff + 2);
     }
@@ -112,15 +112,13 @@ DWORD_PTR __fastcall RecvHook_WOD(LPVOID a1, LPVOID a2, LPVOID a3, PBYTE buff, D
     {
         DumpPacket(SMSG, 0, *(DWORD*)buff, size - 4, buff + 4);
     }
-    CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
-    return reinterpret_cast<decltype(&RecvHook_WOD)>(hookInfo.recvDetour)(a1, a2, a3, buff, size);
+    return reinterpret_cast<decltype(&RecvHook_WOD)>(recvDetour)(a1, a2, a3, buff, size);
 }
 
 DWORD_PTR __fastcall RecvHook_Legion(LPVOID a1, LPVOID a2, LPVOID a3, PBYTE buff, DWORD size)
 {
     DumpPacket(SMSG, 0, *(WORD*)buff, size - 2, buff + 2);
-    CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
-    return reinterpret_cast<decltype(&RecvHook_Legion)>(hookInfo.recvDetour)(a1, a2, a3, buff, size);
+    return reinterpret_cast<decltype(&RecvHook_Legion)>(recvDetour)(a1, a2, a3, buff, size);
 }
 
 const ProtoEntry ProtoTable[] = {
@@ -139,7 +137,7 @@ const ProtoEntry ProtoTable[] = {
 
 DWORD __fastcall SendHook(LPVOID self, LPVOID dummy, CDataStore* ds, DWORD connectionId)
 {
-    if (wowInfo.build >= 21336)
+    if (header.Build >= 21336)
     {
         // skip 4 bytes
         DumpPacket(CMSG, connectionId, *(WORD*)(ds->buffer + 4), ds->size - 6, ds->buffer + 6);
@@ -149,9 +147,8 @@ DWORD __fastcall SendHook(LPVOID self, LPVOID dummy, CDataStore* ds, DWORD conne
         DumpPacket(CMSG, connectionId, *(DWORD*)ds->buffer, ds->size - 4, ds->buffer + 4);
     }
 
-    CHECK(hookInfo.sendHookGood, "Send hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, CDataStore*, DWORD);
-    return reinterpret_cast<proto>(hookInfo.sendDetour)(self, ds, connectionId);
+    return reinterpret_cast<proto>(sendDetour)(self, ds, connectionId);
 }
 
 #pragma region RecvHook
@@ -159,30 +156,27 @@ DWORD __fastcall SendHook(LPVOID self, LPVOID dummy, CDataStore* ds, DWORD conne
 DWORD __fastcall RecvHook(LPVOID self, LPVOID dummy, LPVOID param1, CDataStore* ds)
 {
     DumpPacket(SMSG, 0, *(WORD*)ds->buffer, ds->size - 2, ds->buffer + 2);
-    CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, CDataStore*);
-    return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, ds);
+    return reinterpret_cast<proto>(recvDetour)(self, param1, ds);
 }
 
 DWORD __fastcall RecvHook_TBC(LPVOID self, LPVOID dummy, LPVOID param1, CDataStore* ds, LPVOID param3)
 {
     DumpPacket(SMSG, 0, *(WORD*)ds->buffer, ds->size - 2, ds->buffer + 2);
-    CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, CDataStore*, LPVOID);
-    return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, ds, param3);
+    return reinterpret_cast<proto>(recvDetour)(self, param1, ds, param3);
 }
 
 DWORD __fastcall RecvHook_MOP(LPVOID self, LPVOID dummy, LPVOID param1, CDataStore* ds, LPVOID param3)
 {
     DumpPacket(SMSG, 0, *(DWORD*)ds->buffer, ds->size - 4, ds->buffer + 4);
-    CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, CDataStore*, LPVOID);
-    return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, ds, param3);
+    return reinterpret_cast<proto>(recvDetour)(self, param1, ds, param3);
 }
 
 DWORD __fastcall RecvHook_WOD(LPVOID self, LPVOID dummy, LPVOID param1, LPVOID param2, CDataStore* ds, LPVOID param4)
 {
-    if (wowInfo.build >= 21336)
+    if (header.Build >= 21336)
     {
         DumpPacket(SMSG, 0, *(WORD*)ds->buffer, ds->size - 2, ds->buffer + 2);
     }
@@ -191,17 +185,15 @@ DWORD __fastcall RecvHook_WOD(LPVOID self, LPVOID dummy, LPVOID param1, LPVOID p
         DumpPacket(SMSG, 0, *(DWORD*)ds->buffer, ds->size - 4, ds->buffer + 4);
     }
 
-    CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, LPVOID, CDataStore*, LPVOID);
-    return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, param2, ds, param4);
+    return reinterpret_cast<proto>(recvDetour)(self, param1, param2, ds, param4);
 }
 
 DWORD __fastcall RecvHook_Legion(LPVOID self, LPVOID dummy, LPVOID param1, LPVOID param2, CDataStore* ds, LPVOID param4)
 {
     DumpPacket(SMSG, 0, *(WORD*)ds->buffer, ds->size - 2, ds->buffer + 2);
-    CHECK(hookInfo.recvHookGood, "Recv hook is working.\n");
     typedef DWORD(__thiscall *proto)(LPVOID, LPVOID, LPVOID, CDataStore*, LPVOID);
-    return reinterpret_cast<proto>(hookInfo.recvDetour)(self, param1, param2, ds, param4);
+    return reinterpret_cast<proto>(recvDetour)(self, param1, param2, ds, param4);
 }
 
 #pragma endregion
@@ -220,20 +212,40 @@ const ProtoEntry ProtoTable[] = {
 
 #endif
 
+BOOL __stdcall SignalHandler(DWORD type)
+{
+    printf("\nQuiting...\n");
+    isRuning = false;
+    return TRUE;
+}
+
+bool CreateConsole()
+{
+    if (!AllocConsole())
+        return false;
+
+    if (!SetConsoleCtrlHandler(SignalHandler, TRUE))
+        return false;
+
+    auto outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (!outputHandle || outputHandle == INVALID_HANDLE_VALUE)
+        return false;
+
+    SetConsoleTitle(KATY);
+
+    freopen("CONOUT$", "w", stdout);
+    isRuning = true;
+    return true;
+}
+
 DWORD MainThreadControl(LPVOID  param)
 {
-    if (!ConsoleManager::Create())
+    if (!CreateConsole())
         FreeLibraryAndExitThread(instanceDLL, 0);
 
     printf("Welcome to Katy, a WoW injector paket sniffer.\n");
     printf("Katy is distributed under the GNU GPLv3 license.\n");
-    printf("Source code is available at: ");
-    printf("http://github.com/Konctantin/Katy\n\n");
-
-    printf("Press CTRL-C (CTRL then c) to stop sniffing ");
-    printf("(and exit from the sniffer).\n");
-    printf("Note: you can simply re-attach the sniffer without ");
-    printf("restarting the WoW.\n\n");
+    printf("Source code is available at: http://github.com/Konctantin/Katy\n\n");
 
     DWORD dllPathSize = GetModuleFileName(instanceDLL, dllPath, MAX_PATH);
     if (!dllPathSize)
@@ -245,32 +257,32 @@ DWORD MainThreadControl(LPVOID  param)
 
     printf("DLL path: %s\n", dllPath);
 
-    if (!GetWowInfo(NULL, instanceDLL, &wowInfo))
+    if (!GetWowInfo(NULL, instanceDLL, &header, &wowInfo))
     {
         printf("Can't determine build number.\n\n");
         system("pause");
         FreeLibraryAndExitThread(instanceDLL, 0);
     }
 
-    if (!wowInfo.build)
+    if (!header.Build)
     {
         printf("Can't determine build number.\n\n");
         system("pause");
         FreeLibraryAndExitThread(instanceDLL, 0);
     }
 
-    if (wowInfo.expansion >= _countof(ProtoTable))
+    if (header.Expansion >= _countof(ProtoTable))
     {
-        printf("\nERROR: Unsupported expansion (%u) ", wowInfo.expansion);
+        printf("\nERROR: Unsupported expansion (%u) ", header.Expansion);
         system("pause");
         FreeLibraryAndExitThread(instanceDLL, 0);
     }
 
-    printf("Detected build number: %hu expansion: %hu\n", wowInfo.build, wowInfo.expansion);
+    printf("Detected build number: %hu expansion: %hu\n", header.Build, header.Expansion);
 
     if (wowInfo.IsEmpty())
     {
-        printf("ERROR: This build %u expansion %u is not supported.\n\n", wowInfo.build, wowInfo.expansion);
+        printf("ERROR: This build %u expansion %u is not supported.\n\n", header.Build, header.Expansion);
         system("pause");
         FreeLibraryAndExitThread(instanceDLL, 0);
     }
@@ -280,21 +292,23 @@ DWORD MainThreadControl(LPVOID  param)
     // locale stored in reversed string (enGB as BGne...)
     if (wowInfo.lang)
     {
-        *(DWORD*)hookInfo.locale = _byteswap_ulong(*(DWORD*)(baseAddress + wowInfo.lang));
-        printf("Detected client locale: %s\n", hookInfo.locale);
+        *(DWORD*)header.Locale = _byteswap_ulong(*(DWORD*)(baseAddress + wowInfo.lang));
+        printf("Detected client locale: %s\n", header.Locale);
     }
 
-    auto proto = ProtoTable[wowInfo.expansion];
+    auto proto = ProtoTable[header.Expansion];
     if (!proto.send || !proto.recv)
     {
-        printf("\nERROR: Unsupported expansion (%u)\n", wowInfo.expansion);
+        printf("\nERROR: Unsupported expansion (%u)\n", header.Expansion);
         system("pause");
         FreeLibraryAndExitThread(instanceDLL, 0);
     }
 
+#if DEBUG
     printf("Found '%s' hooks!\n", proto.name);
+#endif
 
-    MH_STATUS status = MH_CreateHook((LPVOID)(baseAddress + wowInfo.send), proto.send, &hookInfo.sendDetour);
+    MH_STATUS status = MH_CreateHook((LPVOID)(baseAddress + wowInfo.send), proto.send, &sendDetour);
     if (status != MH_OK)
     {
         printf("\nERROR create send '%s' hook (%u) '%s'\n", proto.name, status, MH_StatusToString(status));
@@ -302,7 +316,7 @@ DWORD MainThreadControl(LPVOID  param)
         FreeLibraryAndExitThread(instanceDLL, 0);
     }
 
-    status = MH_CreateHook((LPVOID)(baseAddress + wowInfo.recv), proto.recv, &hookInfo.recvDetour);
+    status = MH_CreateHook((LPVOID)(baseAddress + wowInfo.recv), proto.recv, &recvDetour);
     if (status != MH_OK)
     {
         printf("\nERROR create recv '%s' hook (%u) '%s'\n", proto.name, status, MH_StatusToString(status));
@@ -318,19 +332,22 @@ DWORD MainThreadControl(LPVOID  param)
         FreeLibraryAndExitThread(instanceDLL, 0);
     }
 
-    printf(">> All '%s' hooks is installed.\n", proto.name);
+    printf("\n%s hooks is installed.\n\n", proto.name);
 
-	char titleBuff[100];
-	while (ConsoleManager::IsRuning())
-	{
-		_snprintf(titleBuff, sizeof(titleBuff), "Katy, WoW injector packet sniffer.    CMSG: %u    SMSG: %u", cmsgCount, smsgCount);
-		SetConsoleTitle(titleBuff);
-		Sleep(100);
-	}
+    printf("Press CTRL-C to stop sniffing (and exit from the sniffer).\n");
+    printf("Note: you can simply re-attach the sniffer without restarting the WoW.\n\n");
+
+    char titleBuff[100];
+    while (isRuning)
+    {
+        _snprintf(titleBuff, sizeof(titleBuff), "%s.    CMSG: %u    SMSG: %u", KATY, cmsgCount, smsgCount);
+        SetConsoleTitle(titleBuff);
+        Sleep(100);
+    }
 
     MH_DisableHook(MH_ALL_HOOKS);
     printf("All hook disabled.\n");
-    ConsoleManager::Destroy();
+    FreeConsole();
     FreeLibraryAndExitThread(instanceDLL, 0);
     return 0;
 }
