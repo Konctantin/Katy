@@ -12,6 +12,7 @@ x64/*
 *.ilk
 *.idb
 *.ipch
+*.db
 
 *.sdf
 *.opensdf
