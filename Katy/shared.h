@@ -47,7 +47,7 @@ typedef struct {
     DWORD lang;
 
     bool IsEmpty() { return send == NULL || recv == NULL; }
-} WowInfo;
+} Offsets;
 
 bool GetVerInfoFromProcess(HANDLE hProcess, PDWORD build, PDWORD expansion)
 {
@@ -94,7 +94,7 @@ bool GetVerInfoFromProcess(HANDLE hProcess, PDWORD build, PDWORD expansion)
     return true;
 }
 
-bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, PktHeader* header, WowInfo* entry)
+bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, PktHeader* header, Offsets* entry)
 {
     char fileName[MAX_PATH];
     char dllPath[MAX_PATH];

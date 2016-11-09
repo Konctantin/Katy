@@ -14,7 +14,7 @@ std::mutex mtx;
 HINSTANCE instanceDLL = NULL;
 FILE* fileDump = NULL;
 
-WowInfo wowInfo;
+Offsets offsets;
 PktHeader header;
 
 LPVOID recvDetour = NULL, sendDetour = NULL;
@@ -257,7 +257,7 @@ DWORD MainThreadControl(LPVOID  param)
 
     printf("DLL path: %s\n", dllPath);
 
-    if (!GetWowInfo(NULL, instanceDLL, &header, &wowInfo))
+    if (!GetWowInfo(NULL, instanceDLL, &header, &offsets))
     {
         printf("Can't determine build number.\n\n");
         system("pause");
@@ -280,7 +280,7 @@ DWORD MainThreadControl(LPVOID  param)
 
     printf("Detected build number: %hu expansion: %hu\n", header.Build, header.Expansion);
 
-    if (wowInfo.IsEmpty())
+    if (offsets.IsEmpty())
     {
         printf("ERROR: This build %u expansion %u is not supported.\n\n", header.Build, header.Expansion);
         system("pause");
@@ -290,9 +290,9 @@ DWORD MainThreadControl(LPVOID  param)
     auto baseAddress = (DWORD_PTR)GetModuleHandle(NULL);
 
     // locale stored in reversed string (enGB as BGne...)
-    if (wowInfo.lang)
+    if (offsets.lang)
     {
-        *(DWORD*)header.Locale = _byteswap_ulong(*(DWORD*)(baseAddress + wowInfo.lang));
+        *(DWORD*)header.Locale = _byteswap_ulong(*(DWORD*)(baseAddress + offsets.lang));
         printf("Detected client locale: %s\n", header.Locale);
     }
 
@@ -308,7 +308,7 @@ DWORD MainThreadControl(LPVOID  param)
     printf("Found '%s' hooks!\n", proto.name);
 #endif
 
-    MH_STATUS status = MH_CreateHook((LPVOID)(baseAddress + wowInfo.send), proto.send, &sendDetour);
+    MH_STATUS status = MH_CreateHook((LPVOID)(baseAddress + offsets.send), proto.send, &sendDetour);
     if (status != MH_OK)
     {
         printf("\nERROR create send '%s' hook (%u) '%s'\n", proto.name, status, MH_StatusToString(status));
@@ -316,7 +316,7 @@ DWORD MainThreadControl(LPVOID  param)
         FreeLibraryAndExitThread(instanceDLL, 0);
     }
 
-    status = MH_CreateHook((LPVOID)(baseAddress + wowInfo.recv), proto.recv, &recvDetour);
+    status = MH_CreateHook((LPVOID)(baseAddress + offsets.recv), proto.recv, &recvDetour);
     if (status != MH_OK)
     {
         printf("\nERROR create recv '%s' hook (%u) '%s'\n", proto.name, status, MH_StatusToString(status));
