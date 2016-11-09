@@ -8,9 +8,11 @@
 #include <mutex>
 #include "MinHook.h"
 
+using namespace std;
+
 #define KATY "Katy, WoW injector packet sniffer"
 
-std::mutex mtx;
+mutex mtx;
 HINSTANCE instanceDLL = NULL;
 FILE* fileDump = NULL;
 
@@ -294,6 +296,10 @@ DWORD MainThreadControl(LPVOID  param)
     {
         *(DWORD*)header.Locale = _byteswap_ulong(*(DWORD*)(baseAddress + offsets.lang));
         printf("Detected client locale: %s\n", header.Locale);
+    }
+    else
+    {
+        printf("Use default locale: %s\n", header.Locale);
     }
 
     auto proto = ProtoTable[header.Expansion];
