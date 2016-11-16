@@ -52,7 +52,7 @@ typedef struct _WowInfo {
     DWORD lang;
 
     bool IsEmpty() { return !send || !recv; }
-} WowInfo;
+} Offsets;
 
 bool GetVerInfoFromProcess(HANDLE hProcess, PDWORD build, PDWORD expansion)
 {
@@ -150,28 +150,28 @@ DWORD FindOffset(const string pattern)
     return 0;
 }
 
-void CheckPatterns(const char* fileName, WowInfo* entry, DWORD build)
+void CheckPatterns(const char* fileName, Offsets* offsets, DWORD build)
 {
     printf("\nOffsets not found. Trying to find using a pattern\n\n");
     char buff[MAX_PATH];
 
     GetPrivateProfileString("search", "send", "", buff, sizeof(buff), fileName);
-    entry->send = FindOffset(string(buff));
-    printf("Send offset: 0x%08X\n", entry->send);
+    offsets->send = FindOffset(string(buff));
+    printf("Send offset: 0x%08X\n", offsets->send);
 
     GetPrivateProfileString("search", "recv", "", buff, sizeof(buff), fileName);
-    entry->recv = FindOffset(string(buff));
-    printf("Recv offset: 0x%08X\n", entry->recv);
+    offsets->recv = FindOffset(string(buff));
+    printf("Recv offset: 0x%08X\n", offsets->recv);
 
-    if (!entry->IsEmpty())
+    if (!offsets->IsEmpty())
     {
         char section[10];
         char send[11];
         char recv[11];
 
         _snprintf(section, sizeof(section), "%i", build);
-        _snprintf(send,    sizeof(send),  "0x%08X", entry->send);
-        _snprintf(recv,    sizeof(recv),  "0x%08X", entry->recv);
+        _snprintf(send,    sizeof(send),  "0x%08X", offsets->send);
+        _snprintf(recv,    sizeof(recv),  "0x%08X", offsets->recv);
 
         WritePrivateProfileString(section, "send", send, fileName);
         WritePrivateProfileString(section, "recv", recv, fileName);
@@ -181,7 +181,7 @@ void CheckPatterns(const char* fileName, WowInfo* entry, DWORD build)
     }
 }
 
-bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, PktHeader* header, WowInfo* entry)
+bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, PktHeader* header, Offsets* offsets)
 {
     char fileName[MAX_PATH];
     char dllPath[MAX_PATH];
@@ -210,18 +210,18 @@ bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, PktHeader* 
         return false;
     }
 
-    entry->send = GetPrivateProfileInt(section, "send", 0, fileName);
-    entry->recv = GetPrivateProfileInt(section, "recv", 0, fileName);
-    entry->lang = GetPrivateProfileInt(section, "lang", 0, fileName);
+    offsets->send = GetPrivateProfileInt(section, "send", 0, fileName);
+    offsets->recv = GetPrivateProfileInt(section, "recv", 0, fileName);
+    offsets->lang = GetPrivateProfileInt(section, "lang", 0, fileName);
 
     // default lang
     GetPrivateProfileString("search", "lang", "xxXX", &header->Locale[0], sizeof(header->Locale) + 1, fileName);
 
     // check offsets by patterns
-    if (entry->IsEmpty())
+    if (offsets->IsEmpty())
     {
-        CheckPatterns(fileName, entry, header->Build);
+        CheckPatterns(fileName, offsets, header->Build);
     }
 
-    return !entry->IsEmpty();
+    return !offsets->IsEmpty();
 }
