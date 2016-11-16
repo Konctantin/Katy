@@ -17,7 +17,7 @@ const PCHAR offsetFileName = "offsets.x86.ini";
 
 
 #pragma pack(push, 1)
-typedef struct {
+typedef struct _PktHeader {
     char  Magik[3]  = { 'P', 'K', 'T' };
     WORD  Version   = 0x0301;
     BYTE  SnifferId = 15;
@@ -31,8 +31,8 @@ typedef struct {
 } PktHeader;
 #pragma pack(pop)
 
-typedef struct {
-    LPVOID vTable;
+typedef struct _CDataStore {
+    PVOID  vTable;
     PBYTE  buffer;
     DWORD  base;
     DWORD  alloc;
@@ -40,13 +40,13 @@ typedef struct {
     DWORD  read;
 } CDataStore;
 
-typedef struct {
+typedef struct _ProtoEntry {
     LPVOID send;
     LPVOID recv;
     PCHAR  name;
 } ProtoEntry;
 
-typedef struct {
+typedef struct _WowInfo {
     DWORD send;
     DWORD recv;
     DWORD lang;
@@ -99,7 +99,7 @@ bool GetVerInfoFromProcess(HANDLE hProcess, PDWORD build, PDWORD expansion)
     return true;
 }
 
-DWORD FindOffset(string pattern)
+DWORD FindOffset(const string pattern)
 {
     #define ANY_BYTE 0xFFFF
     vector<int> patternList;
@@ -107,16 +107,17 @@ DWORD FindOffset(string pattern)
     for (size_t i = 0; i < pattern.length(); i += 2)
     {
         auto part = pattern.substr(i, 2);
-        if (part != "??")
+        if (part[0] == '?')
+        {
+            patternList.push_back(ANY_BYTE);
+        }
+        else
         {
             int val = stoul(part, nullptr, 16);
             patternList.push_back(val);
         }
-        else
-        {
-            patternList.push_back(ANY_BYTE);
-        }
-        i++;
+        if (part.length() > 1 && part[1] != ' ')
+            ++i;
     }
 
     MODULEINFO info;
@@ -131,8 +132,8 @@ DWORD FindOffset(string pattern)
         found = true;
         for (size_t i = 0; i < patternList.size(); i++)
         {
-            if ((patternList[i] != ANY_BYTE // sucessfull any byte "??"
-                && (BYTE)patternList[i] != *(BYTE*)(offset + i)))
+            if (patternList[i] != ANY_BYTE // sucessfull any byte "??"
+                && (BYTE)patternList[i] != *(BYTE*)(offset + i))
             {
                 found = false;
                 break;
@@ -214,7 +215,7 @@ bool GetWowInfo(const HANDLE hProcess, const HINSTANCE moduleHandle, PktHeader* 
     entry->lang = GetPrivateProfileInt(section, "lang", 0, fileName);
 
     // default lang
-    GetPrivateProfileString("search", "lang", "xxXX", &header->Locale[0], sizeof(header->Locale)+1, fileName);
+    GetPrivateProfileString("search", "lang", "xxXX", &header->Locale[0], sizeof(header->Locale) + 1, fileName);
 
     // check offsets by patterns
     if (entry->IsEmpty())
