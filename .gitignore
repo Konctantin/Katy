@@ -3,6 +3,7 @@
 [R|r]elease/*
 ipch/*
 x64/*
+.vs/*
 
 *.exe
 *.dll
