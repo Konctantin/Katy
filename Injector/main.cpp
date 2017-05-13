@@ -166,7 +166,7 @@ int main(int argc, char* argv[])
 
 std::map<DWORD, PCHAR> GetProcessList()
 {
-    std::map<DWORD, char*> pids;
+    std::map<DWORD, PCHAR> pids;
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnapshot == INVALID_HANDLE_VALUE)
     {
@@ -182,7 +182,7 @@ std::map<DWORD, PCHAR> GetProcessList()
         {
             for (const auto& pname : lookingProcessName)
             {
-                if (!strcmp(processEntry.szExeFile, pname))
+                if (!_strcmpi(processEntry.szExeFile, pname))
                     pids.insert(std::pair<DWORD, PCHAR>(processEntry.th32ProcessID, pname));
             }
         }
